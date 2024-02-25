@@ -1,22 +1,17 @@
-﻿using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Text;
-using System.Linq;
-
-using System.Collections.Generic;
 using System;
+using System.Linq;
 using System.Text;
-using System.Runtime.CompilerServices;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Extism.SourceGenerators;
 
 [Generator]
 public class WasmFunctionGenerator : ISourceGenerator
 {
-
     const string AttributeSource =
         """
-        namespace Extism 
+        namespace Extism
         {
             [AttributeUsage(AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
             sealed class WasmFunctionAttribute : Attribute
@@ -25,7 +20,7 @@ public class WasmFunctionGenerator : ISourceGenerator
                 {
                     Name = name;
                 }
-
+        
                 public string Name { get; set; }
             }
         }
@@ -41,17 +36,17 @@ public class WasmFunctionGenerator : ISourceGenerator
         var builder = new StringBuilder();
 
         builder.AppendLine($$"""
-            using Extism;
-            using System;
-            using System.Runtime.InteropServices;
-            using System.Text.Json.Serialization;
+                             using Extism;
+                             using System;
+                             using System.Runtime.InteropServices;
+                             using System.Text.Json.Serialization;
 
-            namespace Extism.Generated
-            {
-                public class GeneratedExports
-                {
+                             namespace Extism.Generated
+                             {
+                                 public class GeneratedExports
+                                 {
 
-            """);
+                             """);
 
         foreach (var function in receiver.CandidateMethods)
         {
@@ -71,29 +66,29 @@ public class WasmFunctionGenerator : ISourceGenerator
             if (methodSymbol.Parameters.Length == 0)
             {
                 methodCall = $$"""
-                    {{variableAssignment}}{{methodFullyQualifiedName}}();
-                    """;
+                               {{variableAssignment}}{{methodFullyQualifiedName}}();
+                               """;
             }
             else if (methodSymbol.Parameters.Length == 1)
             {
                 if (methodSymbol.Parameters[0].Type.Name == "String")
                 {
                     methodCall = $$"""
-                    var input = global::Extism.Pdk.GetInputString();
-                    {{variableAssignment}}{{methodFullyQualifiedName}}(input);
-                 """;
+                                      var input = global::Extism.Pdk.GetInputString();
+                                      {{variableAssignment}}{{methodFullyQualifiedName}}(input);
+                                   """;
                 }
                 else
                 {
                     var contextType = (ITypeSymbol)jsonAttribute.ConstructorArguments[0].Value;
 
                     methodCall = $$"""
-                    var typeInfo = global::{{contextType.ContainingNamespace}}.{{contextType.Name}}.Default.{{methodSymbol.Parameters[0].Type.Name}};
-                    var json = global::Extism.Pdk.GetInput();
-                    var serializer = new global::Extism.JsonExtismSerializer();
-                    var input = serializer.Deserialize<{{methodSymbol.Parameters[0].Type.ContainingNamespace.Name}}.{{methodSymbol.Parameters[0].Type.Name}}>(json, typeInfo);
-                    {{variableAssignment}}{{methodFullyQualifiedName}}(input);
-                    """;
+                                   var typeInfo = global::{{contextType.ContainingNamespace}}.{{contextType.Name}}.Default.{{methodSymbol.Parameters[0].Type.Name}};
+                                   var json = global::Extism.Pdk.GetInput();
+                                   var serializer = new global::Extism.JsonExtismSerializer();
+                                   var input = serializer.Deserialize<{{methodSymbol.Parameters[0].Type.ContainingNamespace.Name}}.{{methodSymbol.Parameters[0].Type.Name}}>(json, typeInfo);
+                                   {{variableAssignment}}{{methodFullyQualifiedName}}(input);
+                                   """;
                 }
 
             }
@@ -117,22 +112,22 @@ public class WasmFunctionGenerator : ISourceGenerator
                 var typeInfo = $"global::{contextType.ContainingNamespace}.{contextType.Name}.{methodSymbol.ReturnType.Name}";
                 serialization =
                     $$"""
-                    var typeInfo2 = global::{{contextType.ContainingNamespace}}.{{contextType.Name}}.Default.{{methodSymbol.ReturnType.Name}};
-                    var serializer2 = new global::Extism.JsonExtismSerializer();
-                    var json2 = serializer2.Serialize(result, typeInfo2);
-                    global::Extism.Pdk.SetOutput(json2);
-                    """;
+                      var typeInfo2 = global::{{contextType.ContainingNamespace}}.{{contextType.Name}}.Default.{{methodSymbol.ReturnType.Name}};
+                      var serializer2 = new global::Extism.JsonExtismSerializer();
+                      var json2 = serializer2.Serialize(result, typeInfo2);
+                      global::Extism.Pdk.SetOutput(json2);
+                      """;
             }
 
             var source =
-                 $$"""
-                        [UnmanagedCallersOnly(EntryPoint = "{{exportName}}")]
-                        public static void {{methodSymbol.Name}}()
-                        {
-                            {{methodCall}}
-                            {{serialization}}
-                        }
-                """;
+                $$"""
+                          [UnmanagedCallersOnly(EntryPoint = "{{exportName}}")]
+                          public static void {{methodSymbol.Name}}()
+                          {
+                              {{methodCall}}
+                              {{serialization}}
+                          }
+                  """;
 
             builder.AppendLine(source);
         }
@@ -150,34 +145,5 @@ public class WasmFunctionGenerator : ISourceGenerator
     {
         context.RegisterForPostInitialization((pi) => pi.AddSource("WasmFunction__Attributes.g.cs", AttributeSource));
         context.RegisterForSyntaxNotifications(() => new WasmFunctionSyntaxReceiver());
-    }
-}
-
-class WasmFunctionSyntaxReceiver : ISyntaxContextReceiver
-{
-    public List<(MethodDeclarationSyntax method, AttributeSyntax attribute)> CandidateMethods { get; } = new List<(MethodDeclarationSyntax method, AttributeSyntax attribute)>();
-
-    /// <summary>
-    /// Called for every syntax node in the compilation, we can inspect the nodes and save any information useful for generation
-    /// </summary>
-    public void OnVisitSyntaxNode(GeneratorSyntaxContext context)
-    {
-        var syntaxNode = context.Node;
-
-        if (!(syntaxNode is MethodDeclarationSyntax method))
-        {
-            return;
-        }
-
-        var attribute = method.AttributeLists
-            .SelectMany(l => l.Attributes)
-            .FirstOrDefault(a => context.SemanticModel.GetTypeInfo(a).Type?.ToDisplayString()?.Contains("WasmFunction") == true);
-
-        if (attribute is null)
-        {
-            return;
-        }
-
-        CandidateMethods.Add((method, attribute));
     }
 }
